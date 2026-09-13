@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from .bridge import RobotBridge
 from .protocol import Command, Pose, Telemetry
+from .tasks import RobotTask
 from .transport import MemoryTransport
 
 
@@ -26,6 +27,12 @@ class PoseTarget(BaseModel):
 class CommandRequest(BaseModel):
     action: str
     request_id: str | None = None
+    target: PoseTarget | None = None
+
+
+class TaskRequest(BaseModel):
+    robot_id: str
+    action: str
     target: PoseTarget | None = None
 
 
@@ -42,6 +49,7 @@ class CommandCenterStore:
         self.db_path = db_path or os.getenv("COMMAND_CENTER_DB_PATH", "cloud_robot_command_center.db")
         self.telemetry_history: list[Telemetry] = []
         self.command_history: list[Command] = []
+        self.tasks: list[RobotTask] = []
         self._init_db()
         self._load_from_db()
 
@@ -68,6 +76,14 @@ class CommandCenterStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
 
     def _load_from_db(self) -> None:
         with self._connect() as connection:
@@ -77,9 +93,13 @@ class CommandCenterStore:
             command_rows = connection.execute(
                 "SELECT payload FROM commands ORDER BY id ASC"
             ).fetchall()
+            task_rows = connection.execute(
+                    "SELECT payload FROM tasks ORDER BY id ASC"
+                ).fetchall()
 
-        self.telemetry_history = [self._deserialize_telemetry(row["payload"]) for row in telemetry_rows]
-        self.command_history = [self._deserialize_command(row["payload"]) for row in command_rows]
+            self.telemetry_history = [self._deserialize_telemetry(row["payload"]) for row in telemetry_rows]
+            self.command_history = [self._deserialize_command(row["payload"]) for row in command_rows]
+            self.tasks = [self._deserialize_task(row["payload"]) for row in task_rows]
 
     @staticmethod
     def _deserialize_telemetry(payload: str) -> Telemetry:
@@ -103,6 +123,19 @@ class CommandCenterStore:
             target=Pose(**target) if target else None,
         )
 
+    @staticmethod
+    def _deserialize_task(payload: str) -> RobotTask:
+        data = json.loads(payload)
+        target = data.get("target")
+        return RobotTask(
+            id=data["id"],
+            robot_id=data["robot_id"],
+            action=data["action"],
+            target=Pose(**target) if target else None,
+            status=data.get("status", "queued"),
+            created_at=data.get("created_at", ""),
+        )
+
     def handle_telemetry(self, telemetry: Telemetry) -> None:
         self.telemetry_history.append(telemetry)
         with self._connect() as connection:
@@ -119,6 +152,37 @@ class CommandCenterStore:
                 (json.dumps(command.as_dict()),),
             )
 
+    def add_task(self, robot_id: str, action: str, target: Pose | None = None) -> RobotTask:
+        task = RobotTask(
+            id=f"task-{len(self.tasks) + 1:04d}",
+            robot_id=robot_id,
+            action=action,
+            target=target,
+        )
+        self.tasks.append(task)
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO tasks (payload) VALUES (?)",
+                (json.dumps(task.as_dict()),),
+            )
+        return task
+
+    def update_task_status(self, task_id: str, status: str) -> RobotTask:
+        task = next(item for item in self.tasks if item.id == task_id)
+        task.status = status
+        with self._connect() as connection:
+            rows = connection.execute("SELECT id, payload FROM tasks").fetchall()
+            for row in rows:
+                data = json.loads(row["payload"])
+                if data.get("id") == task_id:
+                    data["status"] = status
+                    connection.execute(
+                        "UPDATE tasks SET payload = ? WHERE id = ?",
+                        (json.dumps(data), row["id"]),
+                    )
+                    break
+        return task
+
     def latest_telemetry(self) -> Telemetry | None:
         if not self.telemetry_history:
             return None
@@ -133,8 +197,10 @@ class CommandCenterStore:
             "pose": latest.pose.as_dict() if latest else {"x": 0.0, "y": 0.0, "theta": 0.0},
             "telemetry_count": len(self.telemetry_history),
             "command_count": len(self.command_history),
+            "task_count": len(self.tasks),
             "latest_command": self.command_history[-1].as_dict() if self.command_history else None,
             "history": [entry.as_dict() for entry in self.telemetry_history[-10:]],
+            "tasks": [task.as_dict() for task in self.tasks[-10:]],
         }
 
 
@@ -314,10 +380,21 @@ def create_app(db_path: str | None = None) -> FastAPI:
                         commands.appendChild(item);
                     });
 
-                    drawMap(state);
-                }
+                        if (state.tasks && state.tasks.length) {
+                            const taskList = document.createElement('ul');
+                            taskList.className = 'log';
+                            state.tasks.slice(-3).forEach(task => {
+                                const taskItem = document.createElement('li');
+                                taskItem.textContent = `${task.action} • ${task.robot_id} • ${task.status}`;
+                                taskList.appendChild(taskItem);
+                            });
+                            commands.appendChild(taskList);
+                        }
 
-                async function loadState() {
+                        drawMap(state);
+                    }
+
+                    async function loadState() {
                     const response = await fetch('/api/state');
                     const state = await response.json();
                     renderState(state);
@@ -373,6 +450,26 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/api/commands")
     async def commands() -> list[dict[str, Any]]:
         return [entry.as_dict() for entry in store.command_history[-20:]]
+
+    @app.get("/api/tasks")
+    async def tasks() -> list[dict[str, Any]]:
+        return [task.as_dict() for task in store.tasks[-20:]]
+
+    @app.post("/api/tasks")
+    async def create_task(payload: TaskRequest) -> dict[str, Any]:
+        task = store.add_task(
+            robot_id=payload.robot_id,
+            action=payload.action,
+            target=Pose(payload.target.x, payload.target.y, payload.target.theta) if payload.target else None,
+        )
+        await broadcast_state()
+        return {"status": "accepted", "task": task.as_dict()}
+
+    @app.patch("/api/tasks/{task_id}")
+    async def update_task(task_id: str, status: str) -> dict[str, Any]:
+        task = store.update_task_status(task_id, status)
+        await broadcast_state()
+        return {"status": "updated", "task": task.as_dict()}
 
     @app.post("/api/commands")
     async def submit_command(payload: CommandRequest) -> dict[str, Any]:

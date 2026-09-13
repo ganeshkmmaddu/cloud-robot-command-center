@@ -48,11 +48,31 @@ def test_store_persists_history_to_sqlite(tmp_path) -> None:
     store = CommandCenterStore(db_path=str(db_path))
     store.handle_telemetry(Telemetry("persisted", Pose(1, 2, 0.1), 67, status="moving"))
     store.handle_command(Command("navigate", "req-88", Pose(3, 4, 0.5)))
+    store.add_task("r-1", "patrol", Pose(1, 2, 0.2))
 
     reloaded = CommandCenterStore(db_path=str(db_path))
     assert reloaded.telemetry_history[-1].robot_id == "persisted"
     assert reloaded.command_history[-1].request_id == "req-88"
-    assert reloaded.snapshot()["command_count"] == 1
+    assert reloaded.snapshot()["task_count"] == 1
+
+
+def test_task_api_runs_queue_workflow(tmp_path) -> None:
+    app = create_app(db_path=str(tmp_path / "tasks.db"))
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/tasks",
+        json={"robot_id": "bot-task", "action": "inspect", "target": {"x": 1.5, "y": 2.0, "theta": 0.3}},
+    )
+    assert created.status_code == 200
+    task_id = created.json()["task"]["id"]
+
+    updated = client.patch(f"/api/tasks/{task_id}?status=in_progress")
+    assert updated.status_code == 200
+    assert updated.json()["task"]["status"] == "in_progress"
+
+    state = client.get("/api/state")
+    assert state.json()["task_count"] == 1
 
 
 def test_websocket_streams_state_updates(tmp_path) -> None:
