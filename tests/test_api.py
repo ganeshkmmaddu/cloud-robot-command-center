@@ -31,6 +31,8 @@ def test_api_health_and_command_round_trip(tmp_path) -> None:
     assert state.json()["latest_command"]["request_id"] == "req-77"
     assert state.json()["robot_count"] == 1
     assert state.json()["robots"][0]["robot_id"] == "bot-main"
+    assert state.json()["health"]["battery"] == 88
+    assert state.json()["health"]["cpu_percent"] > 0
 
 
 def test_api_accepts_telemetry_submission(tmp_path) -> None:

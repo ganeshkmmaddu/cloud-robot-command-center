@@ -234,6 +234,13 @@ class CommandCenterStore:
     def snapshot(self) -> dict[str, Any]:
         latest = self.latest_telemetry()
         robot_list = [robot.as_dict() for robot in self.robots.values()]
+        health = {
+            "battery": latest.battery if latest else 0,
+            "cpu_percent": max(10, min(100, (100 - (latest.battery if latest else 0)) + 15)) if latest else 0,
+            "status": latest.status if latest else "idle",
+            "errors": sum(1 for entry in self.telemetry_history if entry.status == "error"),
+            "health_score": max(0, min(100, (latest.battery if latest else 0) + 15)) if latest else 0,
+        }
         return {
             "robot_id": latest.robot_id if latest else None,
             "status": latest.status if latest else "idle",
@@ -244,6 +251,7 @@ class CommandCenterStore:
             "task_count": len(self.tasks),
             "robot_count": len(robot_list),
             "robots": robot_list,
+            "health": health,
             "shadows": {robot_id: shadow.snapshot() for robot_id, shadow in self.shadows.items()},
             "latest_command": self.command_history[-1].as_dict() if self.command_history else None,
             "history": [entry.as_dict() for entry in self.telemetry_history[-10:]],
@@ -312,6 +320,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
                     background: rgba(30, 41, 59, 0.9); border-radius: 12px; padding: 16px; border: 1px solid rgba(148, 163, 184, 0.15);
                 }
                 .tile strong { display: block; margin-bottom: 6px; color: #93c5fd; }
+                .health-bar {
+                    height: 8px; border-radius: 999px; overflow: hidden; background: rgba(148, 163, 184, 0.2);
+                    margin-top: 8px;
+                }
+                .health-fill {
+                    height: 100%; background: linear-gradient(90deg, #22c55e, #facc15, #ef4444);
+                }
                 .robot-list {
                     display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0;
                 }
@@ -348,6 +363,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 <h1>Cloud Robot Command Center</h1>
                 <div class="status-grid" id="status"></div>
                 <div class="robot-list" id="robot-list"></div>
+                <div class="panel" style="margin-top: 18px;">
+                    <h3>Robot health</h3>
+                    <div id="health"></div>
+                </div>
                 <div class="row">
                     <div class="panel">
                         <canvas id="map" width="720" height="420"></canvas>
@@ -446,6 +465,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
                         <div class="tile"><strong>Telemetry</strong>${state.telemetry_count}</div>
                         <div class="tile"><strong>Commands</strong>${state.command_count}</div>
                     `;
+
+                    const health = document.getElementById('health');
+                    const healthScore = state.health && state.health.health_score !== undefined ? state.health.health_score : 0;
+                    health.innerHTML = `
+                        <div><strong>Health score</strong> ${healthScore}%</div>
+                        <div class="health-bar"><div class="health-fill" style="width:${healthScore}%"></div></div>
+                        <div style="margin-top: 8px;">CPU: ${state.health ? state.health.cpu_percent : 0}% • Errors: ${state.health ? state.health.errors : 0}</div>
+                    `;
                     document.getElementById('telemetry').textContent = JSON.stringify(state.history.slice(-5), null, 2);
 
                     const commands = document.getElementById('commands');
@@ -457,22 +484,22 @@ def create_app(db_path: str | None = None) -> FastAPI:
                         commands.appendChild(item);
                     });
 
-                        if (state.tasks && state.tasks.length) {
-                            const taskList = document.createElement('ul');
-                            taskList.className = 'log';
-                            state.tasks.slice(-3).forEach(task => {
-                                const taskItem = document.createElement('li');
-                                taskItem.textContent = `${task.action} • ${task.robot_id} • ${task.status}`;
-                                taskList.appendChild(taskItem);
-                            });
-                            commands.appendChild(taskList);
-                        }
-
-                        drawRobotList(state);
-                        drawMap(state);
+                    if (state.tasks && state.tasks.length) {
+                        const taskList = document.createElement('ul');
+                        taskList.className = 'log';
+                        state.tasks.slice(-3).forEach(task => {
+                            const taskItem = document.createElement('li');
+                            taskItem.textContent = `${task.action} • ${task.robot_id} • ${task.status}`;
+                            taskList.appendChild(taskItem);
+                        });
+                        commands.appendChild(taskList);
                     }
 
-                    async function loadState() {
+                    drawRobotList(state);
+                    drawMap(state);
+                }
+
+                async function loadState() {
                     const response = await fetch('/api/state');
                     const state = await response.json();
                     renderState(state);
