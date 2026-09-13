@@ -158,6 +158,17 @@ def test_export_endpoint_returns_json_and_csv(tmp_path) -> None:
     assert "bot-export" in csv_export.text
 
 
+def test_smoke_startup_check_passes() -> None:
+    app = create_app(db_path="smoke.db")
+    client = TestClient(app)
+
+    health = client.get("/api/health")
+    state = client.get("/api/state")
+    assert health.status_code == 200
+    assert state.status_code == 200
+    assert health.json()["status"] == "ok"
+
+
 def test_task_api_runs_queue_workflow(tmp_path) -> None:
     app = create_app(db_path=str(tmp_path / "tasks.db"))
     client = TestClient(app)

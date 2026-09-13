@@ -14,6 +14,7 @@ from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import JSONResponse, Response
+from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from .auth import AuthService
@@ -910,7 +911,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Serve the cloud robot command center dashboard")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--smoke-test", action="store_true", help="Run a lightweight startup smoke test and exit")
     args = parser.parse_args()
+
+    if args.smoke_test:
+        client = TestClient(app)
+        health = client.get("/api/health")
+        state = client.get("/api/state")
+        if health.status_code != 200 or state.status_code != 200:
+            raise SystemExit("smoke test failed")
+        print("smoke test ok")
+        return
 
     import uvicorn
 
