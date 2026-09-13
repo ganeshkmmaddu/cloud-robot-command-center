@@ -93,58 +93,140 @@ def create_app() -> FastAPI:
                 :root { color-scheme: dark; }
                 * { box-sizing: border-box; }
                 body {
-                    margin: 0; font-family: Arial, sans-serif; background: #0f172a; color: #e2e8f0;
-                    padding: 24px;
+                    margin: 0; font-family: Arial, sans-serif; background: linear-gradient(180deg, #020817 0%, #0f172a 100%);
+                    color: #e2e8f0; padding: 24px;
                 }
-                .card {
-                    max-width: 900px; margin: 0 auto; background: #111827; border: 1px solid #334155;
-                    border-radius: 12px; padding: 24px; box-shadow: 0 20px 40px rgba(15, 23, 42, 0.35);
+                .shell {
+                    max-width: 1200px; margin: 0 auto; background: rgba(15, 23, 42, 0.82);
+                    border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 20px; padding: 24px;
+                    box-shadow: 0 30px 60px rgba(2, 6, 23, 0.55);
                 }
-                h1 { margin-top: 0; }
-                .status {
+                h1 { margin: 0 0 12px; font-size: 2rem; }
+                .row { display: grid; grid-template-columns: 1.4fr 0.8fr; gap: 18px; }
+                .panel {
+                    background: rgba(15, 23, 42, 0.96); border: 1px solid rgba(148, 163, 184, 0.2);
+                    border-radius: 16px; padding: 18px;
+                }
+                .status-grid {
                     display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-                    gap: 12px; margin: 20px 0; 
+                    gap: 12px; margin: 18px 0;
                 }
                 .tile {
-                    background: #1f2937; border-radius: 10px; padding: 16px; border: 1px solid #374151;
+                    background: rgba(30, 41, 59, 0.9); border-radius: 12px; padding: 16px; border: 1px solid rgba(148, 163, 184, 0.15);
                 }
-                .controls { display: flex; gap: 12px; flex-wrap: wrap; margin: 20px 0; }
+                .tile strong { display: block; margin-bottom: 6px; color: #93c5fd; }
+                canvas {
+                    width: 100%; height: 420px; border-radius: 12px; background: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(3, 7, 18, 0.9));
+                    border: 1px solid rgba(148, 163, 184, 0.2);
+                }
+                .controls { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
                 button {
-                    background: #22c55e; border: 0; color: #062b12; font-weight: 700; padding: 10px 16px;
-                    border-radius: 8px; cursor: pointer;
+                    background: linear-gradient(180deg, #22c55e, #16a34a); border: none; color: #062b12;
+                    font-weight: 700; border-radius: 10px; padding: 10px 16px; cursor: pointer;
                 }
-                button.secondary { background: #fbbf24; color: #4a3000; }
+                button.secondary { background: linear-gradient(180deg, #fbbf24, #f59e0b); color: #3b2b00; }
+                .log {
+                    list-style: none; padding: 0; margin: 0; display: grid; gap: 10px;
+                    max-height: 220px; overflow: auto; font-size: 0.95rem;
+                }
+                .log li {
+                    background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(148, 163, 184, 0.15);
+                    border-radius: 10px; padding: 10px 12px;
+                }
                 pre {
-                    background: rgba(15, 23, 42, 0.8); border-radius: 8px; padding: 16px; overflow-x: auto;
-                    border: 1px solid #334155;
+                    margin: 14px 0 0; background: rgba(2, 6, 23, 0.9); border-radius: 10px; padding: 14px;
+                    border: 1px solid rgba(148, 163, 184, 0.2); overflow-x: auto; font-size: 0.85rem;
                 }
             </style>
         </head>
         <body>
-            <div class="card">
+            <div class="shell">
                 <h1>Cloud Robot Command Center</h1>
-                <div class="status" id="status"></div>
-                <div class="controls">
-                    <button id="move-btn">Send move</button>
-                    <button id="stop-btn" class="secondary">Send stop</button>
+                <div class="status-grid" id="status"></div>
+                <div class="row">
+                    <div class="panel">
+                        <canvas id="map" width="720" height="420"></canvas>
+                        <div class="controls">
+                            <button id="move-btn">Send move</button>
+                            <button id="patrol-btn" class="secondary">Patrol</button>
+                            <button id="stop-btn" class="secondary">Stop</button>
+                        </div>
+                    </div>
+                    <div class="panel">
+                        <h3>Recent commands</h3>
+                        <ul class="log" id="commands"></ul>
+                        <h3 style="margin-top: 18px;">Recent telemetry</h3>
+                        <pre id="telemetry"></pre>
+                    </div>
                 </div>
-                <h2>Recent telemetry</h2>
-                <pre id="telemetry"></pre>
             </div>
             <script>
+                const canvas = document.getElementById('map');
+                const ctx = canvas.getContext('2d');
+
+                function drawMap(state) {
+                    const width = canvas.width;
+                    const height = canvas.height;
+                    ctx.clearRect(0, 0, width, height);
+                    ctx.fillStyle = '#020817';
+                    ctx.fillRect(0, 0, width, height);
+
+                    ctx.strokeStyle = 'rgba(148,163,184,0.18)';
+                    ctx.lineWidth = 1;
+                    for (let x = 30; x < width; x += 40) {
+                        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+                    }
+                    for (let y = 30; y < height; y += 40) {
+                        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+                    }
+
+                    const pose = state.pose || { x: 0, y: 0, theta: 0 };
+                    const px = 60 + (pose.x + 5) * 30;
+                    const py = height - 60 - (pose.y + 5) * 30;
+
+                    ctx.beginPath();
+                    ctx.arc(px, py, 16, 0, Math.PI * 2);
+                    ctx.fillStyle = '#22c55e';
+                    ctx.fill();
+
+                    ctx.beginPath();
+                    ctx.moveTo(px, py);
+                    const headingX = px + Math.cos(pose.theta) * 22;
+                    const headingY = py + Math.sin(pose.theta) * 22;
+                    ctx.lineTo(headingX, headingY);
+                    ctx.strokeStyle = '#f8fafc';
+                    ctx.lineWidth = 4;
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#f8fafc';
+                    ctx.font = '14px sans-serif';
+                    ctx.fillText(`robot: ${state.robot_id || 'unknown'}`, 20, 28);
+                }
+
                 async function loadState() {
                     const response = await fetch('/api/state');
                     const state = await response.json();
                     const status = document.getElementById('status');
                     status.innerHTML = `
-                        <div class="tile"><strong>Robot</strong><br>${state.robot_id || 'unknown'}</div>
-                        <div class="tile"><strong>Status</strong><br>${state.status}</div>
-                        <div class="tile"><strong>Battery</strong><br>${state.battery}%</div>
-                        <div class="tile"><strong>Position</strong><br>x=${state.pose.x.toFixed(2)}, y=${state.pose.y.toFixed(2)}</div>
-                        <div class="tile"><strong>Telemetry</strong><br>${state.telemetry_count}</div>
-                        <div class="tile"><strong>Commands</strong><br>${state.command_count}</div>
+                        <div class="tile"><strong>Robot</strong>${state.robot_id || 'unknown'}</div>
+                        <div class="tile"><strong>Status</strong>${state.status}</div>
+                        <div class="tile"><strong>Battery</strong>${state.battery}%</div>
+                        <div class="tile"><strong>Pose</strong>x=${Number(state.pose.x).toFixed(2)} y=${Number(state.pose.y).toFixed(2)}</div>
+                        <div class="tile"><strong>Telemetry</strong>${state.telemetry_count}</div>
+                        <div class="tile"><strong>Commands</strong>${state.command_count}</div>
                     `;
                     document.getElementById('telemetry').textContent = JSON.stringify(state.history.slice(-5), null, 2);
+
+                    const commands = document.getElementById('commands');
+                    commands.innerHTML = '';
+                    const latest = state.latest_command ? [state.latest_command] : [];
+                    latest.forEach(command => {
+                        const item = document.createElement('li');
+                        item.textContent = `${command.action} • ${command.request_id}`;
+                        commands.appendChild(item);
+                    });
+
+                    drawMap(state);
                 }
 
                 async function sendCommand(action, target) {
@@ -161,7 +243,8 @@ def create_app() -> FastAPI:
                     await loadState();
                 }
 
-                document.getElementById('move-btn').addEventListener('click', () => sendCommand('navigate', { x: 1.5, y: 2.5, theta: 0.4 }));
+                document.getElementById('move-btn').addEventListener('click', () => sendCommand('navigate', { x: 2.0, y: 2.5, theta: 0.7 }));
+                document.getElementById('patrol-btn').addEventListener('click', () => sendCommand('patrol', { x: -1.2, y: 1.5, theta: 1.0 }));
                 document.getElementById('stop-btn').addEventListener('click', () => sendCommand('stop', null));
                 setInterval(loadState, 2000);
                 loadState();
