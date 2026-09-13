@@ -11,6 +11,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+from urllib import request
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import JSONResponse, Response
@@ -244,6 +245,15 @@ class CommandCenterStore:
     def add_alert(self, robot_id: str, severity: str, message: str) -> Alert:
         alert = Alert(robot_id=robot_id, severity=severity, message=message)
         self.alerts.append(alert)
+        webhook_url = os.getenv("COMMAND_CENTER_WEBHOOK_URL")
+        if webhook_url:
+            payload = json.dumps(alert.as_dict()).encode("utf-8")
+            try:
+                req = request.Request(webhook_url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+                with request.urlopen(req, timeout=5) as response:  # pragma: no cover - network boundary
+                    response.read()
+            except (OSError, ValueError):
+                return alert
         return alert
 
     def log_event(self, category: str, message: str, severity: str = "info", robot_id: str | None = None) -> EventRecord:

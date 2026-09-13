@@ -65,6 +65,10 @@ The command center supports local login with a bearer token. The default credent
 
 A token is issued via `POST /api/login` and then kept in the `Authorization: Bearer <token>` header for protected API calls. Set `COMMAND_CENTER_REQUIRE_AUTH=true` to enforce the token check in deployment environments, and you can override the default account with `COMMAND_CENTER_USERNAME`, `COMMAND_CENTER_PASSWORD`, and `COMMAND_CENTER_ROLE`.
 
+## Alert webhooks
+
+Optional external alert delivery is enabled via `COMMAND_CENTER_WEBHOOK_URL`. When set, any high-priority alert is posted as JSON to the target URL. This keeps the in-app alert feed and external notification systems aligned without changing the core robot logic.
+
 ## ROS 2 adapter
 
 On a ROS 2 Humble host, build the package from the repository root:

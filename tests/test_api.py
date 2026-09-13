@@ -177,6 +177,36 @@ def test_trends_endpoint_reports_recent_fleet_pattern(tmp_path) -> None:
     assert trends.json()["latest_battery"] == 70
 
 
+def test_alert_webhook_send_is_optional(monkeypatch, tmp_path) -> None:
+    app = create_app(db_path=str(tmp_path / "webhook.db"))
+    client = TestClient(app)
+    calls = []
+
+    def fake_urlopen(req, timeout):
+        calls.append((req.full_url, req.get_method(), req.headers.get("Content-Type")))
+        class DummyResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b"ok"
+
+        return DummyResponse()
+
+    monkeypatch.setenv("COMMAND_CENTER_WEBHOOK_URL", "https://example.test/webhook")
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/telemetry",
+        json={"robot_id": "bot-webhook", "status": "error", "battery": 9, "pose": {"x": 9.0, "y": 9.0, "theta": 0.3}},
+    )
+    assert response.status_code == 200
+    assert calls and calls[0][0] == "https://example.test/webhook"
+
+
 def test_retention_policy_trims_old_records(tmp_path) -> None:
     app = create_app(db_path=str(tmp_path / "retention.db"))
     client = TestClient(app)
