@@ -100,6 +100,26 @@ def test_event_log_tracks_alerts_and_status_updates(tmp_path) -> None:
     assert any(item["category"] == "alert" for item in state.json()["events"])
 
 
+def test_metrics_endpoint_reports_fleet_summary(tmp_path) -> None:
+    app = create_app(db_path=str(tmp_path / "metrics.db"))
+    client = TestClient(app)
+
+    client.post(
+        "/api/telemetry",
+        json={"robot_id": "bot-metrics-a", "status": "moving", "battery": 80, "pose": {"x": 1.0, "y": 2.0, "theta": 0.1}},
+    )
+    client.post(
+        "/api/telemetry",
+        json={"robot_id": "bot-metrics-b", "status": "error", "battery": 12, "pose": {"x": 3.0, "y": 4.0, "theta": 0.7}},
+    )
+
+    metrics = client.get("/api/metrics")
+    assert metrics.status_code == 200
+    assert metrics.json()["battery_average"] == 46.0
+    assert metrics.json()["robots_online"] == 1
+    assert metrics.json()["error_robots"] == 1
+
+
 def test_task_api_runs_queue_workflow(tmp_path) -> None:
     app = create_app(db_path=str(tmp_path / "tasks.db"))
     client = TestClient(app)

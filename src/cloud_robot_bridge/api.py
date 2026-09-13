@@ -334,6 +334,21 @@ class CommandCenterStore:
             return None
         return self.telemetry_history[-1]
 
+    def metrics_summary(self) -> dict[str, Any]:
+        robot_values = list(self.robots.values())
+        batteries = [robot.battery for robot in robot_values]
+        task_status_counts: dict[str, int] = {}
+        for task in self.tasks:
+            task_status_counts[task.status] = task_status_counts.get(task.status, 0) + 1
+        return {
+            "battery_average": round(sum(batteries) / len(batteries), 2) if batteries else 0,
+            "robots_online": sum(1 for robot in robot_values if robot.status != "error"),
+            "error_robots": sum(1 for robot in robot_values if robot.status == "error"),
+            "critical_alerts": sum(1 for alert in self.alerts if alert.severity == "critical"),
+            "task_status_counts": task_status_counts,
+            "last_update": self.telemetry_history[-1].timestamp if self.telemetry_history else None,
+        }
+
     def snapshot(self) -> dict[str, Any]:
         latest = self.latest_telemetry()
         robot_list = [robot.as_dict() for robot in self.robots.values()]
@@ -357,6 +372,7 @@ class CommandCenterStore:
             "robots": robot_list,
             "alerts": [alert.as_dict() for alert in self.alerts[-10:]],
             "events": [event.as_dict() for event in self.events[-10:]],
+            "metrics": self.metrics_summary(),
             "health": health,
             "shadows": {robot_id: shadow.snapshot() for robot_id, shadow in self.shadows.items()},
             "latest_command": self.command_history[-1].as_dict() if self.command_history else None,
@@ -512,6 +528,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
                     <h3>Alerts</h3>
                     <ul class="alert-list" id="alerts"></ul>
                 </div>
+                <div class="panel" style="margin-top: 18px;">
+                    <h3>Fleet metrics</h3>
+                    <div id="metrics"></div>
+                </div>
                 <div class="row">
                     <div class="panel">
                         <canvas id="map" width="720" height="420"></canvas>
@@ -619,6 +639,16 @@ def create_app(db_path: str | None = None) -> FastAPI:
                         <div><strong>Health score</strong> ${healthScore}%</div>
                         <div class="health-bar"><div class="health-fill" style="width:${healthScore}%"></div></div>
                         <div style="margin-top: 8px;">CPU: ${state.health ? state.health.cpu_percent : 0}% • Errors: ${state.health ? state.health.errors : 0}</div>
+                    `;
+
+                    const metrics = document.getElementById('metrics');
+                    const summary = state.metrics || {};
+                    metrics.innerHTML = `
+                        <div><strong>Average battery</strong> ${summary.battery_average ?? 0}%</div>
+                        <div><strong>Online robots</strong> ${summary.robots_online ?? 0}</div>
+                        <div><strong>Error robots</strong> ${summary.error_robots ?? 0}</div>
+                        <div><strong>Critical alerts</strong> ${summary.critical_alerts ?? 0}</div>
+                        <div><strong>Last update</strong> ${summary.last_update || 'n/a'}</div>
                     `;
 
                     const alertList = document.getElementById('alerts');
@@ -740,6 +770,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/api/tasks")
     async def tasks() -> list[dict[str, Any]]:
         return [task.as_dict() for task in store.tasks[-20:]]
+
+    @app.get("/api/metrics")
+    async def metrics() -> dict[str, Any]:
+        return store.metrics_summary()
 
     @app.get("/api/shadow/{robot_id}")
     async def shadow(robot_id: str) -> dict[str, Any]:
