@@ -6,7 +6,6 @@ import argparse
 import csv
 import io
 import json
-import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +19,7 @@ from pydantic import BaseModel
 
 from .auth import AuthService
 from .bridge import RobotBridge
+from .config import load_runtime_config
 from .protocol import Command, Pose, Telemetry
 from .shadow import DeviceShadow
 from .tasks import RobotTask
@@ -110,7 +110,8 @@ class RobotRecord:
 
 class CommandCenterStore:
     def __init__(self, db_path: str | None = None) -> None:
-        self.db_path = db_path or os.getenv("COMMAND_CENTER_DB_PATH", "cloud_robot_command_center.db")
+        config = load_runtime_config(db_path=db_path)
+        self.db_path = config.db_path
         self.telemetry_history: list[Telemetry] = []
         self.command_history: list[Command] = []
         self.tasks: list[RobotTask] = []
@@ -245,7 +246,7 @@ class CommandCenterStore:
     def add_alert(self, robot_id: str, severity: str, message: str) -> Alert:
         alert = Alert(robot_id=robot_id, severity=severity, message=message)
         self.alerts.append(alert)
-        webhook_url = os.getenv("COMMAND_CENTER_WEBHOOK_URL")
+        webhook_url = load_runtime_config().webhook_url
         if webhook_url:
             payload = json.dumps(alert.as_dict()).encode("utf-8")
             try:
@@ -487,13 +488,14 @@ class StoreTelemetrySink:
 
 
 def create_app(db_path: str | None = None) -> FastAPI:
-    store = CommandCenterStore(db_path=db_path)
+    config = load_runtime_config(db_path=db_path)
+    store = CommandCenterStore(db_path=config.db_path)
     transport = MemoryTransport()
     bridge = RobotBridge(StoreTelemetrySink(store), transport)
     bridge.on_command(store.handle_command)
     auth = AuthService()
     websocket_clients: list[WebSocket] = []
-    auth_required = os.getenv("COMMAND_CENTER_REQUIRE_AUTH", "false").lower() == "true"
+    auth_required = config.require_auth
 
     def extract_bearer_token(authorization: str | None) -> str | None:
         if not authorization:
