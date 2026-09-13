@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cloud-robot-command-center"
+version = "0.1.0"
+description = "A local-first ROS 2 and MQTT robot command bridge"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+ros = ["rclpy", "geometry-msgs", "std-msgs"]
+mqtt = ["awsiotsdk>=1.21", "python-dotenv>=1.0"]
+
+[project.scripts]
+robot-simulator = "cloud_robot_bridge.simulator:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cloud_robot_bridge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

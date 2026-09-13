@@ -1,0 +1,6 @@
+services:
+  simulator:
+    build: .
+    environment:
+      ROBOT_ID: ${ROBOT_ID:-simulator-01}
+    command: ["--robot-id", "${ROBOT_ID:-simulator-01}", "--count", "20"]
