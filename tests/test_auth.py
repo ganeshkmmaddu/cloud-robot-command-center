@@ -46,3 +46,11 @@ def test_dashboard_requires_bearer_token_when_enforced(monkeypatch) -> None:
 
     authorized = client.get("/api/state", headers={"Authorization": f"Bearer {token}"})
     assert authorized.status_code == 200
+
+    command = client.post(
+        "/api/commands",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"action": "navigate", "request_id": "auth-cmd", "target": {"x": 1.0, "y": 2.0, "theta": 0.0}},
+    )
+    assert command.status_code == 200
+    assert command.json()["command"]["request_id"] == "auth-cmd"

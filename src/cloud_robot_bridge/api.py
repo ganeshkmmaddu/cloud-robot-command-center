@@ -406,6 +406,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return authorization.split(" ", 1)[1].strip()
         return None
 
+    def authorized(authorization: str | None, required_role: str | None = None) -> tuple[bool, str | None]:
+        if not auth_required:
+            return True, auth.username_for_token(extract_bearer_token(authorization))
+        token = extract_bearer_token(authorization)
+        if not auth.validate_token(token, required_role):
+            return False, None
+        return True, auth.username_for_token(token)
+
     async def require_auth(authorization: str | None = Header(default=None, alias="Authorization")) -> None:
         if not auth_required:
             return
@@ -780,29 +788,41 @@ def create_app(db_path: str | None = None) -> FastAPI:
         return store.shadows.get(robot_id, DeviceShadow()).snapshot()
 
     @app.post("/api/tasks")
-    async def create_task(payload: TaskRequest) -> dict[str, Any]:
+    async def create_task(payload: TaskRequest, authorization: str | None = Header(default=None, alias="Authorization")) -> dict[str, Any]:
+        ok, actor = authorized(authorization)
+        if not ok:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
         task = store.add_task(
             robot_id=payload.robot_id,
             action=payload.action,
             target=Pose(payload.target.x, payload.target.y, payload.target.theta) if payload.target else None,
         )
+        store.log_event("task", f"Task {task.id} queued by {actor} for {payload.robot_id}", "info", payload.robot_id)
         await broadcast_state()
         return {"status": "accepted", "task": task.as_dict()}
 
     @app.patch("/api/tasks/{task_id}")
-    async def update_task(task_id: str, status: str) -> dict[str, Any]:
+    async def update_task(task_id: str, status: str, authorization: str | None = Header(default=None, alias="Authorization")) -> dict[str, Any]:
+        ok, actor = authorized(authorization)
+        if not ok:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
         task = store.update_task_status(task_id, status)
+        store.log_event("task", f"Task {task_id} marked {status} by {actor}", "info", task.robot_id)
         await broadcast_state()
         return {"status": "updated", "task": task.as_dict()}
 
     @app.post("/api/commands")
-    async def submit_command(payload: CommandRequest) -> dict[str, Any]:
+    async def submit_command(payload: CommandRequest, authorization: str | None = Header(default=None, alias="Authorization")) -> dict[str, Any]:
+        ok, actor = authorized(authorization)
+        if not ok:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
         command = Command(
             action=payload.action,
             request_id=payload.request_id or f"cmd-{uuid.uuid4().hex[:8]}",
             target=Pose(**payload.target.model_dump()) if payload.target else None,
         )
         transport.inject_command(command)
+        store.log_event("command", f"Command {command.action} issued by {actor}", "info")
         await broadcast_state()
         return {"status": "accepted", "command": command.as_dict()}
 
