@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
 from typing import Any
 
 
@@ -47,7 +47,7 @@ class Command:
     target: Pose | None = None
 
     @classmethod
-    def from_json(cls, payload: str) -> "Command":
+    def from_json(cls, payload: str) -> Command:
         data = json.loads(payload)
         if not isinstance(data, dict) or not data.get("action") or not data.get("request_id"):
             raise ValueError("command requires action and request_id")
