@@ -19,10 +19,18 @@ def test_api_health_and_command_round_trip(tmp_path) -> None:
     assert command.status_code == 200
     assert command.json()["command"]["action"] == "navigate"
 
+    telemetry = client.post(
+        "/api/telemetry",
+        json={"robot_id": "bot-main", "status": "moving", "battery": 88, "pose": {"x": 1.0, "y": 2.0, "theta": 0.1}},
+    )
+    assert telemetry.status_code == 200
+
     state = client.get("/api/state")
     assert state.status_code == 200
     assert state.json()["command_count"] == 1
     assert state.json()["latest_command"]["request_id"] == "req-77"
+    assert state.json()["robot_count"] == 1
+    assert state.json()["robots"][0]["robot_id"] == "bot-main"
 
 
 def test_api_accepts_telemetry_submission(tmp_path) -> None:
@@ -90,3 +98,23 @@ def test_websocket_streams_state_updates(tmp_path) -> None:
         update = websocket.receive_json()
         assert update["robot_id"] == "bot-web"
         assert update["battery"] == 77
+        assert update["robot_count"] == 1
+
+
+def test_multi_robot_registry_tracks_several_robots(tmp_path) -> None:
+    app = create_app(db_path=str(tmp_path / "robots.db"))
+    client = TestClient(app)
+
+    client.post(
+        "/api/telemetry",
+        json={"robot_id": "bot-a", "status": "moving", "battery": 50, "pose": {"x": 1, "y": 2, "theta": 0.1}},
+    )
+    client.post(
+        "/api/telemetry",
+        json={"robot_id": "bot-b", "status": "idle", "battery": 70, "pose": {"x": 3, "y": 4, "theta": 0.3}},
+    )
+
+    state = client.get("/api/state")
+    assert state.json()["robot_count"] == 2
+    robot_ids = {robot["robot_id"] for robot in state.json()["robots"]}
+    assert {"bot-a", "bot-b"}.issubset(robot_ids)

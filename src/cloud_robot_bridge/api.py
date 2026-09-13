@@ -44,12 +44,29 @@ class TelemetryRecord(BaseModel):
     timestamp: str | None = None
 
 
+class RobotRecord:
+    def __init__(self, robot_id: str, status: str = "idle", battery: int = 0, pose: Pose | None = None) -> None:
+        self.robot_id = robot_id
+        self.status = status
+        self.battery = battery
+        self.pose = pose or Pose(0.0, 0.0, 0.0)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "robot_id": self.robot_id,
+            "status": self.status,
+            "battery": self.battery,
+            "pose": self.pose.as_dict(),
+        }
+
+
 class CommandCenterStore:
     def __init__(self, db_path: str | None = None) -> None:
         self.db_path = db_path or os.getenv("COMMAND_CENTER_DB_PATH", "cloud_robot_command_center.db")
         self.telemetry_history: list[Telemetry] = []
         self.command_history: list[Command] = []
         self.tasks: list[RobotTask] = []
+        self.robots: dict[str, RobotRecord] = {}
         self._init_db()
         self._load_from_db()
 
@@ -136,8 +153,26 @@ class CommandCenterStore:
             created_at=data.get("created_at", ""),
         )
 
+    def register_robot(self, robot_id: str, status: str = "idle", battery: int = 0, pose: Pose | None = None) -> RobotRecord:
+        robot = self.robots.get(robot_id)
+        if robot is None:
+            robot = RobotRecord(robot_id=robot_id, status=status, battery=battery, pose=pose)
+            self.robots[robot_id] = robot
+        else:
+            robot.status = status
+            robot.battery = battery
+            if pose is not None:
+                robot.pose = pose
+        return robot
+
     def handle_telemetry(self, telemetry: Telemetry) -> None:
         self.telemetry_history.append(telemetry)
+        self.register_robot(
+            telemetry.robot_id,
+            status=telemetry.status,
+            battery=telemetry.battery,
+            pose=telemetry.pose,
+        )
         with self._connect() as connection:
             connection.execute(
                 "INSERT INTO telemetry (payload) VALUES (?)",
@@ -190,6 +225,7 @@ class CommandCenterStore:
 
     def snapshot(self) -> dict[str, Any]:
         latest = self.latest_telemetry()
+        robot_list = [robot.as_dict() for robot in self.robots.values()]
         return {
             "robot_id": latest.robot_id if latest else None,
             "status": latest.status if latest else "idle",
@@ -198,6 +234,8 @@ class CommandCenterStore:
             "telemetry_count": len(self.telemetry_history),
             "command_count": len(self.command_history),
             "task_count": len(self.tasks),
+            "robot_count": len(robot_list),
+            "robots": robot_list,
             "latest_command": self.command_history[-1].as_dict() if self.command_history else None,
             "history": [entry.as_dict() for entry in self.telemetry_history[-10:]],
             "tasks": [task.as_dict() for task in self.tasks[-10:]],
@@ -264,6 +302,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
                     background: rgba(30, 41, 59, 0.9); border-radius: 12px; padding: 16px; border: 1px solid rgba(148, 163, 184, 0.15);
                 }
                 .tile strong { display: block; margin-bottom: 6px; color: #93c5fd; }
+                .robot-list {
+                    display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0;
+                }
+                .robot-chip {
+                    padding: 8px 12px; border-radius: 999px; border: 1px solid rgba(148,163,184,0.2);
+                    background: rgba(15, 23, 42, 0.9); color: #e2e8f0; font-size: 0.9rem;
+                }
                 canvas {
                     width: 100%; height: 420px; border-radius: 12px; background: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(3, 7, 18, 0.9));
                     border: 1px solid rgba(148, 163, 184, 0.2);
@@ -292,6 +337,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
             <div class="shell">
                 <h1>Cloud Robot Command Center</h1>
                 <div class="status-grid" id="status"></div>
+                <div class="robot-list" id="robot-list"></div>
                 <div class="row">
                     <div class="panel">
                         <canvas id="map" width="720" height="420"></canvas>
@@ -313,6 +359,17 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 const canvas = document.getElementById('map');
                 const ctx = canvas.getContext('2d');
 
+                function drawRobotList(state) {
+                    const robotList = document.getElementById('robot-list');
+                    robotList.innerHTML = '';
+                    (state.robots || []).forEach(robot => {
+                        const chip = document.createElement('div');
+                        chip.className = 'robot-chip';
+                        chip.textContent = `${robot.robot_id} • ${robot.status} • ${robot.battery}%`;
+                        robotList.appendChild(chip);
+                    });
+                }
+
                 function drawMap(state) {
                     const width = canvas.width;
                     const height = canvas.height;
@@ -329,27 +386,37 @@ def create_app(db_path: str | None = None) -> FastAPI:
                         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
                     }
 
+                    (state.robots || []).forEach(robot => {
+                        const pose = robot.pose || { x: 0, y: 0, theta: 0 };
+                        const px = 60 + (pose.x + 5) * 30;
+                        const py = height - 60 - (pose.y + 5) * 30;
+                        const color = robot.robot_id === (state.robot_id || '') ? '#22c55e' : '#60a5fa';
+
+                        ctx.beginPath();
+                        ctx.arc(px, py, 12, 0, Math.PI * 2);
+                        ctx.fillStyle = color;
+                        ctx.fill();
+
+                        ctx.beginPath();
+                        ctx.moveTo(px, py);
+                        const headingX = px + Math.cos(pose.theta) * 18;
+                        const headingY = py + Math.sin(pose.theta) * 18;
+                        ctx.lineTo(headingX, headingY);
+                        ctx.strokeStyle = '#f8fafc';
+                        ctx.lineWidth = 3;
+                        ctx.stroke();
+
+                        ctx.fillStyle = '#f8fafc';
+                        ctx.font = '11px sans-serif';
+                        ctx.fillText(robot.robot_id, px + 14, py - 10);
+                    });
+
                     const pose = state.pose || { x: 0, y: 0, theta: 0 };
                     const px = 60 + (pose.x + 5) * 30;
                     const py = height - 60 - (pose.y + 5) * 30;
-
-                    ctx.beginPath();
-                    ctx.arc(px, py, 16, 0, Math.PI * 2);
-                    ctx.fillStyle = '#22c55e';
-                    ctx.fill();
-
-                    ctx.beginPath();
-                    ctx.moveTo(px, py);
-                    const headingX = px + Math.cos(pose.theta) * 22;
-                    const headingY = py + Math.sin(pose.theta) * 22;
-                    ctx.lineTo(headingX, headingY);
-                    ctx.strokeStyle = '#f8fafc';
-                    ctx.lineWidth = 4;
-                    ctx.stroke();
-
                     ctx.fillStyle = '#f8fafc';
                     ctx.font = '14px sans-serif';
-                    ctx.fillText(`robot: ${state.robot_id || 'unknown'}`, 20, 28);
+                    ctx.fillText(`active robot: ${state.robot_id || 'unknown'}`, 20, 28);
                 }
 
                 const socket = new WebSocket(`ws://${location.host}/ws`);
@@ -391,6 +458,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
                             commands.appendChild(taskList);
                         }
 
+                        drawRobotList(state);
                         drawMap(state);
                     }
 
