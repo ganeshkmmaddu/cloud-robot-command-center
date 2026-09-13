@@ -10,7 +10,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .auth import AuthService
@@ -380,6 +381,21 @@ def create_app(db_path: str | None = None) -> FastAPI:
     bridge.on_command(store.handle_command)
     auth = AuthService()
     websocket_clients: list[WebSocket] = []
+    auth_required = os.getenv("COMMAND_CENTER_REQUIRE_AUTH", "false").lower() == "true"
+
+    def extract_bearer_token(authorization: str | None) -> str | None:
+        if not authorization:
+            return None
+        if authorization.lower().startswith("bearer "):
+            return authorization.split(" ", 1)[1].strip()
+        return None
+
+    async def require_auth(authorization: str | None = Header(default=None, alias="Authorization")) -> None:
+        if not auth_required:
+            return
+        token = extract_bearer_token(authorization)
+        if not auth.validate_token(token):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
     async def broadcast_state() -> None:
         snapshot = store.snapshot()
@@ -390,6 +406,16 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 websocket_clients.remove(client)
 
     app = FastAPI(title="Cloud Robot Command Center", version="0.2.0")
+
+    @app.middleware("http")
+    async def enforce_auth(request, call_next):
+        public_paths = {"/", "/docs", "/openapi.json", "/redoc", "/api/login", "/api/health"}
+        if request.url.path in public_paths or not auth_required:
+            return await call_next(request)
+        token = extract_bearer_token(request.headers.get("authorization"))
+        if not auth.validate_token(token):
+            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": "Authentication required"})
+        return await call_next(request)
 
     @app.get("/")
     async def root() -> str:
@@ -664,8 +690,16 @@ def create_app(db_path: str | None = None) -> FastAPI:
         """
 
     @app.post("/api/login")
-    async def login(username: str, password: str) -> dict[str, Any]:
-        return {"authenticated": auth.validate(username, password)}
+    async def login(payload: dict[str, str] | None = None) -> dict[str, Any]:
+        data = payload or {}
+        username = data.get("username")
+        password = data.get("password")
+        if username is None or password is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="username and password are required")
+        if not auth.validate(username, password):
+            return {"authenticated": False, "token": None}
+        token = auth.issue_token(username)
+        return {"authenticated": True, "token": token}
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
