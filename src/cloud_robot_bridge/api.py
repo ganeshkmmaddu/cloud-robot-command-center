@@ -391,6 +391,49 @@ class CommandCenterStore:
             "battery_delta": (battery_points[-1] - battery_points[0]) if len(battery_points) > 1 else 0,
         }
 
+    def prune_history(self, max_entries: int | None = None, max_age_seconds: int | None = None) -> dict[str, int]:
+        cutoff = None if max_age_seconds is None else datetime.now(timezone.utc).timestamp() - max_age_seconds
+        start_count = {
+            "telemetry": len(self.telemetry_history),
+            "commands": len(self.command_history),
+            "events": len(self.events),
+        }
+
+        def prune_entries(entries: list[Any], kind: str) -> list[Any]:
+            if max_entries is not None and len(entries) > max_entries:
+                entries = entries[-max_entries:]
+            if cutoff is None:
+                return entries
+
+            filtered: list[Any] = []
+            for entry in entries:
+                if kind in {"telemetry", "events"}:
+                    timestamp = getattr(entry, "timestamp", None)
+                    if not timestamp:
+                        if kind == "telemetry":
+                            filtered.append(entry)
+                        continue
+                    try:
+                        ts = datetime.fromisoformat(timestamp).timestamp()
+                    except ValueError:
+                        filtered.append(entry)
+                        continue
+                    if ts >= cutoff:
+                        filtered.append(entry)
+                else:
+                    filtered.append(entry)
+            return filtered
+
+        self.telemetry_history = prune_entries(self.telemetry_history, "telemetry")
+        self.command_history = prune_entries(self.command_history, "commands")
+        self.events = prune_entries(self.events, "events")
+
+        return {
+            "telemetry": start_count["telemetry"] - len(self.telemetry_history),
+            "commands": start_count["commands"] - len(self.command_history),
+            "events": start_count["events"] - len(self.events),
+        }
+
     def snapshot(self) -> dict[str, Any]:
         latest = self.latest_telemetry()
         robot_list = [robot.as_dict() for robot in self.robots.values()]
@@ -876,6 +919,12 @@ def create_app(db_path: str | None = None) -> FastAPI:
             )
 
         return {"scope": scope, "count": len(payload), "records": payload}
+
+    @app.post("/api/retention")
+    async def retention_policy(max_entries: int | None = None, max_age_seconds: int | None = None) -> dict[str, Any]:
+        removed = store.prune_history(max_entries=max_entries, max_age_seconds=max_age_seconds)
+        await broadcast_state()
+        return {"status": "updated", "removed": removed}
 
     @app.get("/api/shadow/{robot_id}")
     async def shadow(robot_id: str) -> dict[str, Any]:

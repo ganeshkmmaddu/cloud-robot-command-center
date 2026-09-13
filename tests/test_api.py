@@ -177,6 +177,24 @@ def test_trends_endpoint_reports_recent_fleet_pattern(tmp_path) -> None:
     assert trends.json()["latest_battery"] == 70
 
 
+def test_retention_policy_trims_old_records(tmp_path) -> None:
+    app = create_app(db_path=str(tmp_path / "retention.db"))
+    client = TestClient(app)
+
+    client.post(
+        "/api/telemetry",
+        json={"robot_id": "bot-retain", "status": "idle", "battery": 50, "pose": {"x": 2.0, "y": 2.0, "theta": 0.1}},
+    )
+    client.post(
+        "/api/telemetry",
+        json={"robot_id": "bot-retain", "status": "moving", "battery": 60, "pose": {"x": 3.0, "y": 3.0, "theta": 0.2}},
+    )
+
+    response = client.post("/api/retention?max_entries=1")
+    assert response.status_code == 200
+    assert response.json()["removed"]["telemetry"] >= 1
+
+
 def test_smoke_startup_check_passes() -> None:
     app = create_app(db_path="smoke.db")
     client = TestClient(app)
