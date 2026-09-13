@@ -56,6 +56,15 @@ kubectl apply -f deploy/kubernetes.yaml
 
 The dashboard is exposed via the `cloud-robot-command-center` Service and includes health probes on `/api/health`.
 
+## Dashboard auth
+
+The command center supports local login with a bearer token. The default credentials are:
+
+- username: `admin`
+- password: `admin123`
+
+A token is issued via `POST /api/login` and then kept in the `Authorization: Bearer <token>` header for protected API calls. Set `COMMAND_CENTER_REQUIRE_AUTH=true` to enforce the token check in deployment environments, and you can override the default account with `COMMAND_CENTER_USERNAME`, `COMMAND_CENTER_PASSWORD`, and `COMMAND_CENTER_ROLE`.
+
 ## ROS 2 adapter
 
 On a ROS 2 Humble host, build the package from the repository root:

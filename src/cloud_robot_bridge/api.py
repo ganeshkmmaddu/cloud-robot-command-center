@@ -697,9 +697,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
         if username is None or password is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="username and password are required")
         if not auth.validate(username, password):
-            return {"authenticated": False, "token": None}
+            return {"authenticated": False, "token": None, "username": None, "role": None}
         token = auth.issue_token(username)
-        return {"authenticated": True, "token": token}
+        return {
+            "authenticated": True,
+            "token": token,
+            "username": username,
+            "role": auth.role_for_token(token),
+        }
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
