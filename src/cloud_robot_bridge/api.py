@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -31,6 +32,31 @@ class Alert:
             "robot_id": self.robot_id,
             "severity": self.severity,
             "message": self.message,
+        }
+
+
+class EventRecord:
+    def __init__(
+        self,
+        category: str,
+        message: str,
+        severity: str = "info",
+        robot_id: str | None = None,
+        timestamp: str | None = None,
+    ) -> None:
+        self.category = category
+        self.message = message
+        self.severity = severity
+        self.robot_id = robot_id
+        self.timestamp = timestamp or datetime.now(timezone.utc).isoformat()
+
+    def as_dict(self) -> dict[str, str | None]:
+        return {
+            "category": self.category,
+            "severity": self.severity,
+            "robot_id": self.robot_id,
+            "message": self.message,
+            "timestamp": self.timestamp,
         }
 
 
@@ -85,6 +111,7 @@ class CommandCenterStore:
         self.robots: dict[str, RobotRecord] = {}
         self.shadows: dict[str, DeviceShadow] = {}
         self.alerts: list[Alert] = []
+        self.events: list[EventRecord] = []
         self._init_db()
         self._load_from_db()
 
@@ -119,6 +146,14 @@ class CommandCenterStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
 
     def _load_from_db(self) -> None:
         with self._connect() as connection:
@@ -131,10 +166,14 @@ class CommandCenterStore:
             task_rows = connection.execute(
                     "SELECT payload FROM tasks ORDER BY id ASC"
                 ).fetchall()
+            event_rows = connection.execute(
+                "SELECT payload FROM events ORDER BY id ASC"
+            ).fetchall()
 
             self.telemetry_history = [self._deserialize_telemetry(row["payload"]) for row in telemetry_rows]
             self.command_history = [self._deserialize_command(row["payload"]) for row in command_rows]
             self.tasks = [self._deserialize_task(row["payload"]) for row in task_rows]
+            self.events = [self._deserialize_event(row["payload"]) for row in event_rows]
 
     @staticmethod
     def _deserialize_telemetry(payload: str) -> Telemetry:
@@ -171,6 +210,17 @@ class CommandCenterStore:
             created_at=data.get("created_at", ""),
         )
 
+    @staticmethod
+    def _deserialize_event(payload: str) -> EventRecord:
+        data = json.loads(payload)
+        return EventRecord(
+            category=data["category"],
+            message=data["message"],
+            severity=data.get("severity", "info"),
+            robot_id=data.get("robot_id"),
+            timestamp=data.get("timestamp"),
+        )
+
     def register_robot(self, robot_id: str, status: str = "idle", battery: int = 0, pose: Pose | None = None) -> RobotRecord:
         robot = self.robots.get(robot_id)
         if robot is None:
@@ -191,6 +241,16 @@ class CommandCenterStore:
         self.alerts.append(alert)
         return alert
 
+    def log_event(self, category: str, message: str, severity: str = "info", robot_id: str | None = None) -> EventRecord:
+        event = EventRecord(category=category, message=message, severity=severity, robot_id=robot_id)
+        self.events.append(event)
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO events (payload) VALUES (?)",
+                (json.dumps(event.as_dict()),),
+            )
+        return event
+
     def handle_telemetry(self, telemetry: Telemetry) -> None:
         self.telemetry_history.append(telemetry)
         self.register_robot(
@@ -199,10 +259,28 @@ class CommandCenterStore:
             battery=telemetry.battery,
             pose=telemetry.pose,
         )
+        self.log_event(
+            "telemetry",
+            f"Robot {telemetry.robot_id} reported status={telemetry.status} battery={telemetry.battery}%",
+            "info",
+            telemetry.robot_id,
+        )
         if telemetry.battery <= 15:
             self.add_alert(telemetry.robot_id, "critical", f"Battery critical at {telemetry.battery}%")
+            self.log_event(
+                "alert",
+                f"Battery critical at {telemetry.battery}% for {telemetry.robot_id}",
+                "critical",
+                telemetry.robot_id,
+            )
         elif telemetry.status == "error":
             self.add_alert(telemetry.robot_id, "warning", "Robot reported an error state")
+            self.log_event(
+                "alert",
+                f"Robot {telemetry.robot_id} reported an error state",
+                "warning",
+                telemetry.robot_id,
+            )
         with self._connect() as connection:
             connection.execute(
                 "INSERT INTO telemetry (payload) VALUES (?)",
@@ -273,12 +351,15 @@ class CommandCenterStore:
             "telemetry_count": len(self.telemetry_history),
             "command_count": len(self.command_history),
             "task_count": len(self.tasks),
+            "event_count": len(self.events),
             "robot_count": len(robot_list),
             "robots": robot_list,
             "alerts": [alert.as_dict() for alert in self.alerts[-10:]],
+            "events": [event.as_dict() for event in self.events[-10:]],
             "health": health,
             "shadows": {robot_id: shadow.snapshot() for robot_id, shadow in self.shadows.items()},
             "latest_command": self.command_history[-1].as_dict() if self.command_history else None,
+            "latest_event": self.events[-1].as_dict() if self.events else None,
             "history": [entry.as_dict() for entry in self.telemetry_history[-10:]],
             "tasks": [task.as_dict() for task in self.tasks[-10:]],
         }
@@ -419,6 +500,8 @@ def create_app(db_path: str | None = None) -> FastAPI:
                         <ul class="log" id="commands"></ul>
                         <h3 style="margin-top: 18px;">Recent telemetry</h3>
                         <pre id="telemetry"></pre>
+                        <h3 style="margin-top: 18px;">Recent events</h3>
+                        <pre id="events"></pre>
                     </div>
                 </div>
             </div>
@@ -520,6 +603,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
                         item.textContent = `[${alert.severity.toUpperCase()}] ${alert.robot_id}: ${alert.message}`;
                         alertList.appendChild(item);
                     });
+                    const eventLog = document.getElementById('events');
+                    if (eventLog) {
+                        eventLog.textContent = JSON.stringify((state.events || []).slice(-5), null, 2);
+                    }
                     document.getElementById('telemetry').textContent = JSON.stringify(state.history.slice(-5), null, 2);
 
                     const commands = document.getElementById('commands');
@@ -606,6 +693,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/api/commands")
     async def commands() -> list[dict[str, Any]]:
         return [entry.as_dict() for entry in store.command_history[-20:]]
+
+    @app.get("/api/events")
+    async def events() -> list[dict[str, Any]]:
+        return [event.as_dict() for event in store.events[-20:]]
 
     @app.get("/api/tasks")
     async def tasks() -> list[dict[str, Any]]:

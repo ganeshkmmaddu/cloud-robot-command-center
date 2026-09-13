@@ -81,6 +81,25 @@ def test_alerts_are_generated_on_low_battery_and_errors(tmp_path) -> None:
     assert any(item["severity"] == "critical" for item in state.json()["alerts"])
 
 
+def test_event_log_tracks_alerts_and_status_updates(tmp_path) -> None:
+    app = create_app(db_path=str(tmp_path / "events.db"))
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/telemetry",
+        json={"robot_id": "bot-event", "status": "moving", "battery": 14, "pose": {"x": 3.0, "y": 4.0, "theta": 0.1}},
+    )
+    assert response.status_code == 200
+
+    event_response = client.get("/api/events")
+    assert event_response.status_code == 200
+    assert event_response.json()[-1]["robot_id"] == "bot-event"
+
+    state = client.get("/api/state")
+    assert state.json()["event_count"] >= 2
+    assert any(item["category"] == "alert" for item in state.json()["events"])
+
+
 def test_task_api_runs_queue_workflow(tmp_path) -> None:
     app = create_app(db_path=str(tmp_path / "tasks.db"))
     client = TestClient(app)
