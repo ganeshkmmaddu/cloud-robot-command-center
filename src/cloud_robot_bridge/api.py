@@ -6,7 +6,7 @@ import argparse
 import uuid
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from .bridge import RobotBridge
@@ -77,6 +77,15 @@ def create_app() -> FastAPI:
     transport = MemoryTransport()
     bridge = RobotBridge(StoreTelemetrySink(store), transport)
     bridge.on_command(store.handle_command)
+    websocket_clients: list[WebSocket] = []
+
+    async def broadcast_state() -> None:
+        snapshot = store.snapshot()
+        for client in list(websocket_clients):
+            try:
+                await client.send_json(snapshot)
+            except RuntimeError:
+                websocket_clients.remove(client)
 
     app = FastAPI(title="Cloud Robot Command Center", version="0.2.0")
 
@@ -203,9 +212,14 @@ def create_app() -> FastAPI:
                     ctx.fillText(`robot: ${state.robot_id || 'unknown'}`, 20, 28);
                 }
 
-                async function loadState() {
-                    const response = await fetch('/api/state');
-                    const state = await response.json();
+                const socket = new WebSocket(`ws://${location.host}/ws`);
+
+                socket.addEventListener('message', (event) => {
+                    const state = JSON.parse(event.data);
+                    renderState(state);
+                });
+
+                function renderState(state) {
                     const status = document.getElementById('status');
                     status.innerHTML = `
                         <div class="tile"><strong>Robot</strong>${state.robot_id || 'unknown'}</div>
@@ -227,6 +241,12 @@ def create_app() -> FastAPI:
                     });
 
                     drawMap(state);
+                }
+
+                async function loadState() {
+                    const response = await fetch('/api/state');
+                    const state = await response.json();
+                    renderState(state);
                 }
 
                 async function sendCommand(action, target) {
@@ -253,6 +273,17 @@ def create_app() -> FastAPI:
         </html>
         """
 
+    @app.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket) -> None:
+        await websocket.accept()
+        websocket_clients.append(websocket)
+        try:
+            await websocket.send_json(store.snapshot())
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            websocket_clients.remove(websocket)
+
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
         return {"status": "ok", "service": "cloud-robot-command-center"}
@@ -277,6 +308,7 @@ def create_app() -> FastAPI:
             target=Pose(**payload.target.model_dump()) if payload.target else None,
         )
         transport.inject_command(command)
+        await broadcast_state()
         return {"status": "accepted", "command": command.as_dict()}
 
     @app.post("/api/telemetry")
@@ -289,6 +321,7 @@ def create_app() -> FastAPI:
             timestamp=payload.timestamp or "",
         )
         bridge.publish_telemetry(telemetry)
+        await broadcast_state()
         return {"status": "accepted", "telemetry": telemetry.as_dict()}
 
     return app

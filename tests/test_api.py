@@ -40,3 +40,20 @@ def test_api_accepts_telemetry_submission() -> None:
     state = client.get("/api/state")
     assert state.json()["robot_id"] == "bot-01"
     assert state.json()["telemetry_count"] == 1
+
+
+def test_websocket_streams_state_updates() -> None:
+    app = create_app()
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as websocket:
+        first_payload = websocket.receive_json()
+        assert first_payload["telemetry_count"] == 0
+
+        client.post(
+            "/api/telemetry",
+            json={"robot_id": "bot-web", "status": "idle", "battery": 77, "pose": {"x": 4.0, "y": 5.0, "theta": 0.2}},
+        )
+        update = websocket.receive_json()
+        assert update["robot_id"] == "bot-web"
+        assert update["battery"] == 77
