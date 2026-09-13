@@ -20,6 +20,20 @@ from .tasks import RobotTask
 from .transport import MemoryTransport
 
 
+class Alert:
+    def __init__(self, robot_id: str, severity: str, message: str) -> None:
+        self.robot_id = robot_id
+        self.severity = severity
+        self.message = message
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "robot_id": self.robot_id,
+            "severity": self.severity,
+            "message": self.message,
+        }
+
+
 class PoseTarget(BaseModel):
     x: float
     y: float
@@ -70,6 +84,7 @@ class CommandCenterStore:
         self.tasks: list[RobotTask] = []
         self.robots: dict[str, RobotRecord] = {}
         self.shadows: dict[str, DeviceShadow] = {}
+        self.alerts: list[Alert] = []
         self._init_db()
         self._load_from_db()
 
@@ -171,6 +186,11 @@ class CommandCenterStore:
         shadow.update_reported(robot_id, status, battery, pose)
         return robot
 
+    def add_alert(self, robot_id: str, severity: str, message: str) -> Alert:
+        alert = Alert(robot_id=robot_id, severity=severity, message=message)
+        self.alerts.append(alert)
+        return alert
+
     def handle_telemetry(self, telemetry: Telemetry) -> None:
         self.telemetry_history.append(telemetry)
         self.register_robot(
@@ -179,6 +199,10 @@ class CommandCenterStore:
             battery=telemetry.battery,
             pose=telemetry.pose,
         )
+        if telemetry.battery <= 15:
+            self.add_alert(telemetry.robot_id, "critical", f"Battery critical at {telemetry.battery}%")
+        elif telemetry.status == "error":
+            self.add_alert(telemetry.robot_id, "warning", "Robot reported an error state")
         with self._connect() as connection:
             connection.execute(
                 "INSERT INTO telemetry (payload) VALUES (?)",
@@ -251,6 +275,7 @@ class CommandCenterStore:
             "task_count": len(self.tasks),
             "robot_count": len(robot_list),
             "robots": robot_list,
+            "alerts": [alert.as_dict() for alert in self.alerts[-10:]],
             "health": health,
             "shadows": {robot_id: shadow.snapshot() for robot_id, shadow in self.shadows.items()},
             "latest_command": self.command_history[-1].as_dict() if self.command_history else None,
@@ -327,6 +352,15 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 .health-fill {
                     height: 100%; background: linear-gradient(90deg, #22c55e, #facc15, #ef4444);
                 }
+                .alert-list {
+                    list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 10px;
+                }
+                .alert-item {
+                    border-radius: 10px; padding: 10px 12px; border: 1px solid rgba(148, 163, 184, 0.2);
+                    background: rgba(30, 41, 59, 0.8);
+                }
+                .critical { border-color: rgba(239, 68, 68, 0.7); }
+                .warning { border-color: rgba(250, 204, 21, 0.7); }
                 .robot-list {
                     display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0;
                 }
@@ -366,6 +400,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 <div class="panel" style="margin-top: 18px;">
                     <h3>Robot health</h3>
                     <div id="health"></div>
+                </div>
+                <div class="panel" style="margin-top: 18px;">
+                    <h3>Alerts</h3>
+                    <ul class="alert-list" id="alerts"></ul>
                 </div>
                 <div class="row">
                     <div class="panel">
@@ -473,6 +511,15 @@ def create_app(db_path: str | None = None) -> FastAPI:
                         <div class="health-bar"><div class="health-fill" style="width:${healthScore}%"></div></div>
                         <div style="margin-top: 8px;">CPU: ${state.health ? state.health.cpu_percent : 0}% • Errors: ${state.health ? state.health.errors : 0}</div>
                     `;
+
+                    const alertList = document.getElementById('alerts');
+                    alertList.innerHTML = '';
+                    (state.alerts || []).slice(-5).reverse().forEach(alert => {
+                        const item = document.createElement('li');
+                        item.className = `alert-item ${alert.severity}`;
+                        item.textContent = `[${alert.severity.toUpperCase()}] ${alert.robot_id}: ${alert.message}`;
+                        alertList.appendChild(item);
+                    });
                     document.getElementById('telemetry').textContent = JSON.stringify(state.history.slice(-5), null, 2);
 
                     const commands = document.getElementById('commands');

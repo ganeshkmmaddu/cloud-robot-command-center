@@ -66,6 +66,21 @@ def test_store_persists_history_to_sqlite(tmp_path) -> None:
     assert reloaded.snapshot()["task_count"] == 1
 
 
+def test_alerts_are_generated_on_low_battery_and_errors(tmp_path) -> None:
+    app = create_app(db_path=str(tmp_path / "alerts.db"))
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/telemetry",
+        json={"robot_id": "bot-alert", "status": "error", "battery": 12, "pose": {"x": 8, "y": 9, "theta": 1.2}},
+    )
+    assert response.status_code == 200
+
+    state = client.get("/api/state")
+    assert state.json()["alerts"][0]["robot_id"] == "bot-alert"
+    assert any(item["severity"] == "critical" for item in state.json()["alerts"])
+
+
 def test_task_api_runs_queue_workflow(tmp_path) -> None:
     app = create_app(db_path=str(tmp_path / "tasks.db"))
     client = TestClient(app)
