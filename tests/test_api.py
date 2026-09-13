@@ -158,6 +158,25 @@ def test_export_endpoint_returns_json_and_csv(tmp_path) -> None:
     assert "bot-export" in csv_export.text
 
 
+def test_trends_endpoint_reports_recent_fleet_pattern(tmp_path) -> None:
+    app = create_app(db_path=str(tmp_path / "trends.db"))
+    client = TestClient(app)
+
+    client.post(
+        "/api/telemetry",
+        json={"robot_id": "bot-trend", "status": "moving", "battery": 80, "pose": {"x": 1.0, "y": 2.0, "theta": 0.1}},
+    )
+    client.post(
+        "/api/telemetry",
+        json={"robot_id": "bot-trend", "status": "idle", "battery": 70, "pose": {"x": 1.5, "y": 2.5, "theta": 0.2}},
+    )
+
+    trends = client.get("/api/trends")
+    assert trends.status_code == 200
+    assert trends.json()["battery_delta"] == -10
+    assert trends.json()["latest_battery"] == 70
+
+
 def test_smoke_startup_check_passes() -> None:
     app = create_app(db_path="smoke.db")
     client = TestClient(app)

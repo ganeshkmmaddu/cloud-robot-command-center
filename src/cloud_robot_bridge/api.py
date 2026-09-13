@@ -378,6 +378,19 @@ class CommandCenterStore:
             "last_update": self.telemetry_history[-1].timestamp if self.telemetry_history else None,
         }
 
+    def trend_summary(self) -> dict[str, Any]:
+        history = self.telemetry_history[-10:]
+        battery_points = [entry.battery for entry in history]
+        status_counts: dict[str, int] = {}
+        for entry in history:
+            status_counts[entry.status] = status_counts.get(entry.status, 0) + 1
+        return {
+            "battery_points": battery_points,
+            "status_counts": status_counts,
+            "latest_battery": battery_points[-1] if battery_points else 0,
+            "battery_delta": (battery_points[-1] - battery_points[0]) if len(battery_points) > 1 else 0,
+        }
+
     def snapshot(self) -> dict[str, Any]:
         latest = self.latest_telemetry()
         robot_list = [robot.as_dict() for robot in self.robots.values()]
@@ -402,6 +415,7 @@ class CommandCenterStore:
             "alerts": [alert.as_dict() for alert in self.alerts[-10:]],
             "events": [event.as_dict() for event in self.events[-10:]],
             "metrics": self.metrics_summary(),
+            "trends": self.trend_summary(),
             "health": health,
             "shadows": {robot_id: shadow.snapshot() for robot_id, shadow in self.shadows.items()},
             "latest_command": self.command_history[-1].as_dict() if self.command_history else None,
@@ -569,6 +583,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
                     <h3>Fleet metrics</h3>
                     <div id="metrics"></div>
                 </div>
+                <div class="panel" style="margin-top: 18px;">
+                    <h3>Trend summary</h3>
+                    <div id="trends"></div>
+                </div>
                 <div class="row">
                     <div class="panel">
                         <canvas id="map" width="720" height="420"></canvas>
@@ -686,6 +704,17 @@ def create_app(db_path: str | None = None) -> FastAPI:
                         <div><strong>Error robots</strong> ${summary.error_robots ?? 0}</div>
                         <div><strong>Critical alerts</strong> ${summary.critical_alerts ?? 0}</div>
                         <div><strong>Last update</strong> ${summary.last_update || 'n/a'}</div>
+                    `;
+
+                    const trends = document.getElementById('trends');
+                    const trendSummary = state.trends || {};
+                    const batteryPoints = (trendSummary.battery_points || []).join(' → ');
+                    const statusCounts = Object.entries(trendSummary.status_counts || {}).map(([key, value]) => `${key}:${value}`).join(' • ');
+                    trends.innerHTML = `
+                        <div><strong>Latest battery</strong> ${trendSummary.latest_battery ?? 0}%</div>
+                        <div><strong>Battery delta</strong> ${trendSummary.battery_delta ?? 0}%</div>
+                        <div><strong>Recent points</strong> ${batteryPoints || 'n/a'}</div>
+                        <div><strong>Status mix</strong> ${statusCounts || 'n/a'}</div>
                     `;
 
                     const alertList = document.getElementById('alerts');
@@ -821,6 +850,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/api/metrics")
     async def metrics() -> dict[str, Any]:
         return store.metrics_summary()
+
+    @app.get("/api/trends")
+    async def trends() -> dict[str, Any]:
+        return store.trend_summary()
 
     @app.get("/api/export", response_model=None)
     async def export_data(scope: str = "telemetry", format: str = "json") -> dict[str, Any] | Response:
