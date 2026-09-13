@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import os
 import sqlite3
@@ -11,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from .auth import AuthService
@@ -782,6 +784,28 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/api/metrics")
     async def metrics() -> dict[str, Any]:
         return store.metrics_summary()
+
+    @app.get("/api/export", response_model=None)
+    async def export_data(scope: str = "telemetry", format: str = "json") -> dict[str, Any] | Response:
+        valid_scopes = {"telemetry": store.telemetry_history, "commands": store.command_history, "tasks": store.tasks}
+        if scope not in valid_scopes:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported export scope")
+
+        records = valid_scopes[scope]
+        payload = [record.as_dict() for record in records]
+        if format.lower() == "csv":
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(["field", "value"])
+            for record in payload:
+                writer.writerow(["record", json.dumps(record, sort_keys=True)])
+            return Response(
+                content=output.getvalue(),
+                media_type="text/csv",
+                headers={"Content-Disposition": f'attachment; filename="{scope}.csv"'},
+            )
+
+        return {"scope": scope, "count": len(payload), "records": payload}
 
     @app.get("/api/shadow/{robot_id}")
     async def shadow(robot_id: str) -> dict[str, Any]:

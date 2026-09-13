@@ -120,6 +120,25 @@ def test_metrics_endpoint_reports_fleet_summary(tmp_path) -> None:
     assert metrics.json()["error_robots"] == 1
 
 
+def test_export_endpoint_returns_json_and_csv(tmp_path) -> None:
+    app = create_app(db_path=str(tmp_path / "export.db"))
+    client = TestClient(app)
+
+    client.post(
+        "/api/telemetry",
+        json={"robot_id": "bot-export", "status": "idle", "battery": 55, "pose": {"x": 4.0, "y": 5.0, "theta": 0.2}},
+    )
+
+    json_export = client.get("/api/export?scope=telemetry&format=json")
+    assert json_export.status_code == 200
+    assert json_export.json()["count"] == 1
+    assert json_export.json()["records"][0]["robot_id"] == "bot-export"
+
+    csv_export = client.get("/api/export?scope=telemetry&format=csv")
+    assert csv_export.status_code == 200
+    assert "bot-export" in csv_export.text
+
+
 def test_task_api_runs_queue_workflow(tmp_path) -> None:
     app = create_app(db_path=str(tmp_path / "tasks.db"))
     client = TestClient(app)
