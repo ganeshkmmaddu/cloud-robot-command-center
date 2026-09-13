@@ -45,6 +45,17 @@ Run with Docker:
 docker compose up --build
 ```
 
+## Deployment
+
+A sample Kubernetes deployment manifest is included in [deploy/kubernetes.yaml](deploy/kubernetes.yaml). Build the image first, then apply it:
+
+```bash
+docker build -t cloud-robot-command-center:latest .
+kubectl apply -f deploy/kubernetes.yaml
+```
+
+The dashboard is exposed via the `cloud-robot-command-center` Service and includes health probes on `/api/health`.
+
 ## ROS 2 adapter
 
 On a ROS 2 Humble host, build the package from the repository root:

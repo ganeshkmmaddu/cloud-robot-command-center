@@ -1,0 +1,86 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloud-robot-command-center-config
+data:
+  PORT: "8000"
+  ROBOT_ID: "simulator-01"
+  COMMAND_CENTER_DB_PATH: "/tmp/cloud_robot_command_center.db"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloud-robot-command-center-secrets
+type: Opaque
+stringData:
+  COMMAND_CENTER_USERNAME: admin
+  COMMAND_CENTER_PASSWORD: admin123
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloud-robot-command-center
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloud-robot-command-center
+  template:
+    metadata:
+      labels:
+        app: cloud-robot-command-center
+    spec:
+      containers:
+        - name: dashboard
+          image: cloud-robot-command-center:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: COMMAND_CENTER_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-robot-command-center-secrets
+                  key: COMMAND_CENTER_USERNAME
+            - name: COMMAND_CENTER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-robot-command-center-secrets
+                  key: COMMAND_CENTER_PASSWORD
+            - name: COMMAND_CENTER_DB_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: cloud-robot-command-center-config
+                  key: COMMAND_CENTER_DB_PATH
+            - name: ROBOT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: cloud-robot-command-center-config
+                  key: ROBOT_ID
+          command: ["robot-command-center"]
+          args: ["--host", "0.0.0.0", "--port", "8000"]
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloud-robot-command-center
+spec:
+  selector:
+    app: cloud-robot-command-center
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: LoadBalancer

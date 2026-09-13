@@ -7,6 +7,16 @@ services:
 
   dashboard:
     build: .
+    environment:
+      COMMAND_CENTER_USERNAME: ${COMMAND_CENTER_USERNAME:-admin}
+      COMMAND_CENTER_PASSWORD: ${COMMAND_CENTER_PASSWORD:-admin123}
+      COMMAND_CENTER_DB_PATH: /tmp/cloud_robot_command_center.db
     ports:
       - "8000:8000"
     command: ["robot-command-center", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
