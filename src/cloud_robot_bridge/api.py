@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
+from .auth import AuthService
 from .bridge import RobotBridge
 from .protocol import Command, Pose, Telemetry
 from .shadow import DeviceShadow
@@ -263,6 +264,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     transport = MemoryTransport()
     bridge = RobotBridge(StoreTelemetrySink(store), transport)
     bridge.on_command(store.handle_command)
+    auth = AuthService()
     websocket_clients: list[WebSocket] = []
 
     async def broadcast_state() -> None:
@@ -499,6 +501,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
         </body>
         </html>
         """
+
+    @app.post("/api/login")
+    async def login(username: str, password: str) -> dict[str, Any]:
+        return {"authenticated": auth.validate(username, password)}
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
