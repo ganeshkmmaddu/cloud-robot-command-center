@@ -11,12 +11,14 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6"]
+dev = ["pytest>=8.0", "ruff>=0.6", "fastapi>=0.111", "uvicorn>=0.30", "httpx>=0.27"]
 ros = ["rclpy", "geometry-msgs", "std-msgs"]
 mqtt = ["awsiotsdk>=1.21", "python-dotenv>=1.0"]
+web = ["fastapi>=0.111", "uvicorn>=0.30"]
 
 [project.scripts]
 robot-simulator = "cloud_robot_bridge.simulator:main"
+robot-command-center = "cloud_robot_bridge.api:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cloud_robot_bridge"]

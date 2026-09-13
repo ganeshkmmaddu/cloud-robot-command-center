@@ -7,8 +7,9 @@ A local-first robot control bridge inspired by the architecture of [ros2-cloud-r
 - Typed telemetry and command protocol with deterministic JSON output
 - Deterministic circular-path simulator for demos and development
 - Transport-neutral bridge with an in-memory implementation for tests
+- Local HTTP dashboard for robot status, telemetry history, and command submission
 - ROS 2 Humble Python package that maps `/pose` to bridge telemetry
-- Docker and Compose entry points for the simulator
+- Docker and Compose entry points for the simulator and dashboard
 - GitHub Actions checks for tests and linting
 - AWS IoT certificate environment template, with secrets excluded from Git
 
@@ -29,6 +30,14 @@ Run a local robot stream:
 ```powershell
 robot-simulator --robot-id demo-bot --count 20 --interval 0.25
 ```
+
+Start the dashboard:
+
+```powershell
+robot-command-center --host 0.0.0.0 --port 8000
+```
+
+Then open http://localhost:8000 in a browser.
 
 Run with Docker:
 

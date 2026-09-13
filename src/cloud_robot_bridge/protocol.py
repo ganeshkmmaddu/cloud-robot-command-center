@@ -46,6 +46,13 @@ class Command:
     request_id: str
     target: Pose | None = None
 
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "action": self.action,
+            "request_id": self.request_id,
+            "target": self.target.as_dict() if self.target else None,
+        }
+
     @classmethod
     def from_json(cls, payload: str) -> Command:
         data = json.loads(payload)

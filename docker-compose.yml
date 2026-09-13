@@ -4,3 +4,9 @@ services:
     environment:
       ROBOT_ID: ${ROBOT_ID:-simulator-01}
     command: ["--robot-id", "${ROBOT_ID:-simulator-01}", "--count", "20"]
+
+  dashboard:
+    build: .
+    ports:
+      - "8000:8000"
+    command: ["robot-command-center", "--host", "0.0.0.0", "--port", "8000"]
