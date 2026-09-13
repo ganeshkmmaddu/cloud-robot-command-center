@@ -7,7 +7,7 @@ A local-first robot control bridge inspired by the architecture of [ros2-cloud-r
 - Typed telemetry and command protocol with deterministic JSON output
 - Deterministic circular-path simulator for demos and development
 - Transport-neutral bridge with in-memory and AWS IoT MQTT implementations
-- Interactive HTTP dashboard with a live map, telemetry history, command controls, and robot status cards
+- Interactive HTTP dashboard with a live map, telemetry history, command controls, robot status cards, and SQLite-backed persistence
 - ROS 2 Humble Python package that maps `/pose` to bridge telemetry
 - Docker and Compose entry points for the simulator and dashboard
 - GitHub Actions checks for tests and linting

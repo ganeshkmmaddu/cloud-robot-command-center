@@ -1,10 +1,11 @@
 from fastapi.testclient import TestClient
 
-from cloud_robot_bridge.api import create_app
+from cloud_robot_bridge.api import CommandCenterStore, create_app
+from cloud_robot_bridge.protocol import Command, Pose, Telemetry
 
 
-def test_api_health_and_command_round_trip() -> None:
-    app = create_app()
+def test_api_health_and_command_round_trip(tmp_path) -> None:
+    app = create_app(db_path=str(tmp_path / "health.db"))
     client = TestClient(app)
 
     health = client.get("/api/health")
@@ -24,8 +25,8 @@ def test_api_health_and_command_round_trip() -> None:
     assert state.json()["latest_command"]["request_id"] == "req-77"
 
 
-def test_api_accepts_telemetry_submission() -> None:
-    app = create_app()
+def test_api_accepts_telemetry_submission(tmp_path) -> None:
+    app = create_app(db_path=str(tmp_path / "telemetry.db"))
     client = TestClient(app)
 
     response = client.post(
@@ -42,8 +43,20 @@ def test_api_accepts_telemetry_submission() -> None:
     assert state.json()["telemetry_count"] == 1
 
 
-def test_websocket_streams_state_updates() -> None:
-    app = create_app()
+def test_store_persists_history_to_sqlite(tmp_path) -> None:
+    db_path = tmp_path / "history.db"
+    store = CommandCenterStore(db_path=str(db_path))
+    store.handle_telemetry(Telemetry("persisted", Pose(1, 2, 0.1), 67, status="moving"))
+    store.handle_command(Command("navigate", "req-88", Pose(3, 4, 0.5)))
+
+    reloaded = CommandCenterStore(db_path=str(db_path))
+    assert reloaded.telemetry_history[-1].robot_id == "persisted"
+    assert reloaded.command_history[-1].request_id == "req-88"
+    assert reloaded.snapshot()["command_count"] == 1
+
+
+def test_websocket_streams_state_updates(tmp_path) -> None:
+    app = create_app(db_path=str(tmp_path / "ws.db"))
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as websocket:

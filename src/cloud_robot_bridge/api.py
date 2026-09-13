@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import sqlite3
 import uuid
 from typing import Any
 
@@ -35,15 +38,86 @@ class TelemetryRecord(BaseModel):
 
 
 class CommandCenterStore:
-    def __init__(self) -> None:
+    def __init__(self, db_path: str | None = None) -> None:
+        self.db_path = db_path or os.getenv("COMMAND_CENTER_DB_PATH", "cloud_robot_command_center.db")
         self.telemetry_history: list[Telemetry] = []
         self.command_history: list[Command] = []
+        self._init_db()
+        self._load_from_db()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.db_path)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def _init_db(self) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS telemetry (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS commands (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
+
+    def _load_from_db(self) -> None:
+        with self._connect() as connection:
+            telemetry_rows = connection.execute(
+                "SELECT payload FROM telemetry ORDER BY id ASC"
+            ).fetchall()
+            command_rows = connection.execute(
+                "SELECT payload FROM commands ORDER BY id ASC"
+            ).fetchall()
+
+        self.telemetry_history = [self._deserialize_telemetry(row["payload"]) for row in telemetry_rows]
+        self.command_history = [self._deserialize_command(row["payload"]) for row in command_rows]
+
+    @staticmethod
+    def _deserialize_telemetry(payload: str) -> Telemetry:
+        data = json.loads(payload)
+        pose = data.get("pose") or {"x": 0.0, "y": 0.0, "theta": 0.0}
+        return Telemetry(
+            robot_id=data["robot_id"],
+            pose=Pose(**pose),
+            battery=data.get("battery", 0),
+            status=data.get("status", "idle"),
+            timestamp=data.get("timestamp", ""),
+        )
+
+    @staticmethod
+    def _deserialize_command(payload: str) -> Command:
+        data = json.loads(payload)
+        target = data.get("target")
+        return Command(
+            action=data["action"],
+            request_id=data["request_id"],
+            target=Pose(**target) if target else None,
+        )
 
     def handle_telemetry(self, telemetry: Telemetry) -> None:
         self.telemetry_history.append(telemetry)
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO telemetry (payload) VALUES (?)",
+                (json.dumps(telemetry.as_dict()),),
+            )
 
     def handle_command(self, command: Command) -> None:
         self.command_history.append(command)
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO commands (payload) VALUES (?)",
+                (json.dumps(command.as_dict()),),
+            )
 
     def latest_telemetry(self) -> Telemetry | None:
         if not self.telemetry_history:
@@ -72,8 +146,8 @@ class StoreTelemetrySink:
         self.store.handle_telemetry(telemetry)
 
 
-def create_app() -> FastAPI:
-    store = CommandCenterStore()
+def create_app(db_path: str | None = None) -> FastAPI:
+    store = CommandCenterStore(db_path=db_path)
     transport = MemoryTransport()
     bridge = RobotBridge(StoreTelemetrySink(store), transport)
     bridge.on_command(store.handle_command)
