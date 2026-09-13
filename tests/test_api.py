@@ -120,6 +120,25 @@ def test_metrics_endpoint_reports_fleet_summary(tmp_path) -> None:
     assert metrics.json()["error_robots"] == 1
 
 
+def test_command_approval_workflow(tmp_path) -> None:
+    app = create_app(db_path=str(tmp_path / "approval.db"))
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/commands",
+        json={"action": "navigate", "request_id": "approval-1", "target": {"x": 4.0, "y": 5.0, "theta": 0.1}, "status": "pending"},
+    )
+    assert created.status_code == 200
+    assert created.json()["command"]["status"] == "pending"
+
+    approved = client.patch("/api/commands/approval-1?status=approved")
+    assert approved.status_code == 200
+    assert approved.json()["command"]["status"] == "approved"
+
+    state = client.get("/api/state")
+    assert state.json()["latest_command"]["status"] == "approved"
+
+
 def test_export_endpoint_returns_json_and_csv(tmp_path) -> None:
     app = create_app(db_path=str(tmp_path / "export.db"))
     client = TestClient(app)

@@ -45,12 +45,14 @@ class Command:
     action: str
     request_id: str
     target: Pose | None = None
+    status: str = "pending"
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "action": self.action,
             "request_id": self.request_id,
             "target": self.target.as_dict() if self.target else None,
+            "status": self.status,
         }
 
     @classmethod
@@ -60,4 +62,9 @@ class Command:
             raise ValueError("command requires action and request_id")
         target_data = data.get("target")
         target = Pose(**target_data) if target_data else None
-        return cls(action=str(data["action"]), request_id=str(data["request_id"]), target=target)
+        return cls(
+            action=str(data["action"]),
+            request_id=str(data["request_id"]),
+            target=target,
+            status=str(data.get("status", "pending")),
+        )

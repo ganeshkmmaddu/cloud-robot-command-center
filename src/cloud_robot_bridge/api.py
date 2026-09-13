@@ -73,6 +73,7 @@ class CommandRequest(BaseModel):
     action: str
     request_id: str | None = None
     target: PoseTarget | None = None
+    status: str = "pending"
 
 
 class TaskRequest(BaseModel):
@@ -330,6 +331,31 @@ class CommandCenterStore:
                     )
                     break
         return task
+
+    def update_command_status(self, request_id: str, status: str) -> Command:
+        command = next(item for item in self.command_history if item.request_id == request_id)
+        replacement = Command(
+            action=command.action,
+            request_id=command.request_id,
+            target=command.target,
+            status=status,
+        )
+        for index, existing in enumerate(self.command_history):
+            if existing.request_id == request_id:
+                self.command_history[index] = replacement
+                break
+        with self._connect() as connection:
+            rows = connection.execute("SELECT id, payload FROM commands").fetchall()
+            for row in rows:
+                data = json.loads(row["payload"])
+                if data.get("request_id") == request_id:
+                    data["status"] = status
+                    connection.execute(
+                        "UPDATE commands SET payload = ? WHERE id = ?",
+                        (json.dumps(data), row["id"]),
+                    )
+                    break
+        return replacement
 
     def latest_telemetry(self) -> Telemetry | None:
         if not self.telemetry_history:
@@ -773,6 +799,16 @@ def create_app(db_path: str | None = None) -> FastAPI:
     async def commands() -> list[dict[str, Any]]:
         return [entry.as_dict() for entry in store.command_history[-20:]]
 
+    @app.patch("/api/commands/{request_id}")
+    async def update_command_status(request_id: str, status: str, authorization: str | None = Header(default=None, alias="Authorization")) -> dict[str, Any]:
+        ok, actor = authorized(authorization)
+        if not ok:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        command = store.update_command_status(request_id, status)
+        store.log_event("command", f"Command {request_id} set to {status} by {actor}", "info")
+        await broadcast_state()
+        return {"status": "updated", "command": command.as_dict()}
+
     @app.get("/api/events")
     async def events() -> list[dict[str, Any]]:
         return [event.as_dict() for event in store.events[-20:]]
@@ -844,6 +880,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
             action=payload.action,
             request_id=payload.request_id or f"cmd-{uuid.uuid4().hex[:8]}",
             target=Pose(**payload.target.model_dump()) if payload.target else None,
+            status=payload.status,
         )
         transport.inject_command(command)
         store.log_event("command", f"Command {command.action} issued by {actor}", "info")
