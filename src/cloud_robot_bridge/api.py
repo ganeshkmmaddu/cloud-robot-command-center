@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from .bridge import RobotBridge
 from .protocol import Command, Pose, Telemetry
+from .shadow import DeviceShadow
 from .tasks import RobotTask
 from .transport import MemoryTransport
 
@@ -67,6 +68,7 @@ class CommandCenterStore:
         self.command_history: list[Command] = []
         self.tasks: list[RobotTask] = []
         self.robots: dict[str, RobotRecord] = {}
+        self.shadows: dict[str, DeviceShadow] = {}
         self._init_db()
         self._load_from_db()
 
@@ -163,6 +165,9 @@ class CommandCenterStore:
             robot.battery = battery
             if pose is not None:
                 robot.pose = pose
+
+        shadow = self.shadows.setdefault(robot_id, DeviceShadow())
+        shadow.update_reported(robot_id, status, battery, pose)
         return robot
 
     def handle_telemetry(self, telemetry: Telemetry) -> None:
@@ -195,6 +200,8 @@ class CommandCenterStore:
             target=target,
         )
         self.tasks.append(task)
+        shadow = self.shadows.setdefault(robot_id, DeviceShadow())
+        shadow.set_desired_task(action, target)
         with self._connect() as connection:
             connection.execute(
                 "INSERT INTO tasks (payload) VALUES (?)",
@@ -236,6 +243,7 @@ class CommandCenterStore:
             "task_count": len(self.tasks),
             "robot_count": len(robot_list),
             "robots": robot_list,
+            "shadows": {robot_id: shadow.snapshot() for robot_id, shadow in self.shadows.items()},
             "latest_command": self.command_history[-1].as_dict() if self.command_history else None,
             "history": [entry.as_dict() for entry in self.telemetry_history[-10:]],
             "tasks": [task.as_dict() for task in self.tasks[-10:]],
@@ -522,6 +530,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/api/tasks")
     async def tasks() -> list[dict[str, Any]]:
         return [task.as_dict() for task in store.tasks[-20:]]
+
+    @app.get("/api/shadow/{robot_id}")
+    async def shadow(robot_id: str) -> dict[str, Any]:
+        return store.shadows.get(robot_id, DeviceShadow()).snapshot()
 
     @app.post("/api/tasks")
     async def create_task(payload: TaskRequest) -> dict[str, Any]:

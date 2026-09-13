@@ -7,7 +7,7 @@ A local-first robot control bridge inspired by the architecture of [ros2-cloud-r
 - Typed telemetry and command protocol with deterministic JSON output
 - Deterministic circular-path simulator for demos and development
 - Transport-neutral bridge with in-memory and AWS IoT MQTT implementations
-- Interactive HTTP dashboard with a live map, telemetry history, command controls, robot status cards, and SQLite-backed persistence
+- Interactive HTTP dashboard with a live map, telemetry history, command controls, robot status cards, SQLite-backed persistence, and device-shadow state tracking
 - ROS 2 Humble Python package that maps `/pose` to bridge telemetry
 - Docker and Compose entry points for the simulator and dashboard
 - GitHub Actions checks for tests and linting
@@ -67,6 +67,8 @@ Copy `.env.example` to `.env`, set `IOT_ENDPOINT`, and mount certificates under 
 The transport boundary means the cloud adapter can be added without changing simulator, protocol, or bridge tests.
 
 A ready-to-use MQTT transport is available in the Python package via `cloud_robot_bridge.mqtt`. It publishes telemetry on `robot/{robot_id}/pub/monitoring/telemetry` and listens on `robot/{robot_id}/sub/command/#` when the AWS IoT endpoint and certificate paths are configured.
+
+The command center also exposes a lightweight device-shadow model via `cloud_robot_bridge.shadow` and `/api/shadow/{robot_id}` so reported telemetry and desired tasks stay available while robots are offline.
 
 ## Design notes
 
