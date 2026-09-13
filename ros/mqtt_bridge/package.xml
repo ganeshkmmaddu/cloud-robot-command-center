@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>mqtt_bridge</name>
+  <version>0.1.0</version>
+  <description>Local-first ROS 2 adapter for cloud robot telemetry and commands.</description>
+  <maintainer email="maintainer@example.com">Cloud Robot Maintainers</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <export><build_type>ament_python</build_type></export>
+</package>
